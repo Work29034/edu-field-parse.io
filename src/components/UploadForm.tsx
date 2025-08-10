@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import Papa from "papaparse";
+import { parsePdfToRows } from "@/lib/pdf";
 
 const TARGET_HEADERS = [
   "Roll Number",
@@ -181,11 +182,22 @@ export default function UploadForm() {
     }
 
     if (isPdf) {
-      toast({
-        title: "PDF parsing requires backend",
-        description: "Connect Supabase to enable accurate PDF→CSV extraction at scale.",
-        variant: "destructive",
-      });
+      try {
+        const ab = await file.arrayBuffer();
+        const rows = await parsePdfToRows(ab, defaultCredits);
+        if (!rows.length) {
+          toast({ title: "No data found", description: "Could not detect any rows in this PDF. Please try a CSV or a clearer PDF export.", variant: "destructive" });
+          return;
+        }
+        const csv = toCsv(rows);
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        setDownUrl(url);
+        toast({ title: "CSV ready", description: "Your PDF has been parsed.", duration: 3000 });
+      } catch (err) {
+        console.error(err);
+        toast({ title: "PDF parse failed", description: "There was an issue parsing this PDF.", variant: "destructive" });
+      }
       return;
     }
 
