@@ -1,13 +1,13 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import UploadForm from "@/components/UploadForm";
 
 const Index = () => {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
-    </div>
+    <main className="min-h-screen flex items-center justify-center bg-background p-6">
+      <section className="w-full">
+        <h1 className="sr-only">EduParse - PDF/CSV to clean CSV</h1>
+        <UploadForm />
+      </section>
+    </main>
   );
 };
 
