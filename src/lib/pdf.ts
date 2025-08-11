@@ -10,8 +10,7 @@ import workerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 GlobalWorkerOptions.workerSrc = workerSrc as any;
 
 export async function parsePdfToRows(
-  arrayBuffer: ArrayBuffer,
-  defaultCredits: number
+  arrayBuffer: ArrayBuffer
 ): Promise<Row[]> {
   const pdf = await getDocument({ data: arrayBuffer }).promise;
   let fullText = "";
@@ -67,7 +66,7 @@ export async function parsePdfToRows(
     ) {
       // merge student context
       const merged: Partial<Row> = { ...ctx, ...subj };
-      rows.push(finalizeRow(merged, defaultCredits));
+      rows.push(finalizeRow(merged));
       subj = {};
     }
   }
@@ -108,7 +107,7 @@ export async function parsePdfToRows(
     while ((m = re.exec(text))) {
       const roll = m[1];
       const base: Partial<Row> = { "Roll Number": roll } as any;
-      rows.push(finalizeRow(base, defaultCredits));
+      rows.push(finalizeRow(base));
     }
   }
 

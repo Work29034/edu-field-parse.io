@@ -61,6 +61,10 @@ export function buildHeaderMap(headers: string[]) {
   const map: Partial<Record<TargetHeader, string>> = {};
   for (const h of headers) {
     const key = normalize(h);
+    // Skip SNO column as it's not needed
+    if (key === "sno" || key === "serialno" || key === "serialnumber") {
+      continue;
+    }
     if (HEADER_SYNONYMS[key]) {
       map[HEADER_SYNONYMS[key]] = h;
     } else {
@@ -73,6 +77,11 @@ export function buildHeaderMap(headers: string[]) {
     }
   }
   return map;
+}
+
+export function getMissingRequiredFields(headerMap: Partial<Record<TargetHeader, string>>): TargetHeader[] {
+  const requiredFields: TargetHeader[] = ["Class", "Section", "Department", "Year", "Semester"];
+  return requiredFields.filter(field => !headerMap[field]);
 }
 
 export function toCsv(rows: Row[]): string {
@@ -90,21 +99,18 @@ export function toCsv(rows: Row[]): string {
   return [headerLine, ...lines].join("\n");
 }
 
-export function finalizeRow(row: Partial<Row>, defaultCredits: number): Row {
+export function finalizeRow(row: Partial<Row>, userInputs?: Partial<Row>): Row {
   // Fill Grade Points if missing
   const grade = String((row["Grade"] ?? "")).toUpperCase().trim();
   const gp = String(row["Grade Points"] ?? "").trim();
   if (!gp && grade) {
     (row["Grade Points"]) = computeGradePoints(grade);
   }
-  // Fill Credits if missing
-  const credits = String(row["Credits"] ?? "").trim();
-  if (!credits) {
-    row["Credits"] = defaultCredits;
-  }
+  
   const out: Row = {} as any;
   for (const h of TARGET_HEADERS) {
-    (out as any)[h] = (row as any)[h] ?? "";
+    // Use user inputs for missing required fields, otherwise use row data
+    (out as any)[h] = (row as any)[h] ?? (userInputs as any)?.[h] ?? "";
   }
   return out;
 }

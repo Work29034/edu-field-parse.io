@@ -1,218 +1,185 @@
-import React, { useMemo, useState } from "react";
-import { useToast } from "@/hooks/use-toast";
+import React, { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
-import Papa from "papaparse";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Upload, Download, FileText, Table, CheckCircle, ArrowRight } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { parsePdfToRows } from "@/lib/pdf";
+import { buildHeaderMap, toCsv, finalizeRow, getMissingRequiredFields, type Row } from "@/lib/csv";
+import { TARGET_HEADERS, type TargetHeader } from "@/lib/constants";
+import Papa from "papaparse";
 
-const TARGET_HEADERS = [
-  "Roll Number",
-  "Student Name",
-  "Class",
-  "Section",
-  "Department",
-  "Year",
-  "Semester",
-  "Subject Code",
-  "Subject Name",
-  "Grade",
-  "Grade Points",
-  "Credits",
-] as const;
-
-type TargetHeader = typeof TARGET_HEADERS[number];
-
-type Row = Record<TargetHeader, string | number | null>;
-
-const GRADE_POINTS_MAP: Record<string, number> = {
-  "A+": 10,
-  A: 9,
-  B: 8,
-  C: 7,
-  D: 6,
-  E: 5,
-  F: 0,
-  AB: 0,
-};
-
-function normalize(s: string) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-const HEADER_SYNONYMS: Record<string, TargetHeader> = {
-  // Roll Number
-  roll: "Roll Number",
-  rollno: "Roll Number",
-  rollnum: "Roll Number",
-  rollnumber: "Roll Number",
-  regno: "Roll Number",
-  registrationno: "Roll Number",
-  // Student Name
-  name: "Student Name",
-  student: "Student Name",
-  studentname: "Student Name",
-  // Class
-  class: "Class",
-  classname: "Class",
-  // Section
-  section: "Section",
-  sec: "Section",
-  // Department
-  dept: "Department",
-  department: "Department",
-  // Year
-  year: "Year",
-  academicyear: "Year",
-  // Semester
-  sem: "Semester",
-  semester: "Semester",
-  // Subject Code
-  subjectcode: "Subject Code",
-  subcode: "Subject Code",
-  code: "Subject Code",
-  // Subject Name
-  subject: "Subject Name",
-  subjectname: "Subject Name",
-  subname: "Subject Name",
-  // Grade
-  grade: "Grade",
-  gradeletter: "Grade",
-  // Grade Points
-  gradepoints: "Grade Points",
-  gp: "Grade Points",
-  sgpa: "Grade Points",
-  // Credits
-  credit: "Credits",
-  credits: "Credits",
-  cr: "Credits",
-};
-
-function buildHeaderMap(headers: string[]) {
-  const map: Partial<Record<TargetHeader, string>> = {};
-  for (const h of headers) {
-    const key = normalize(h);
-    if (HEADER_SYNONYMS[key]) {
-      map[HEADER_SYNONYMS[key]] = h;
-    } else {
-      // direct exact match on normalized target headers
-      for (const target of TARGET_HEADERS) {
-        if (normalize(target) === key) {
-          map[target] = h;
-          break;
-        }
-      }
-    }
-  }
-  return map;
-}
-
-function toCsv(rows: Row[]): string {
-  const headerLine = TARGET_HEADERS.join(",");
-  const lines = rows.map((row) =>
-    TARGET_HEADERS.map((h) => {
-      const val = row[h] ?? "";
-      const s = String(val);
-      // escape CSV
-      if (s.includes(",") || s.includes("\n") || s.includes('"')) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    }).join(",")
-  );
-  return [headerLine, ...lines].join("\n");
-}
-
-export default function UploadForm() {
-  const { toast } = useToast();
+const UploadForm = () => {
   const [file, setFile] = useState<File | null>(null);
-  const [downUrl, setDownUrl] = useState<string>("");
-  
-  // Auto-set credits to 3 (removed user input)
-  const defaultCredits = 3;
+  const [downUrl, setDownUrl] = useState("");
+  const [missingFields, setMissingFields] = useState<TargetHeader[]>([]);
+  const [userInputs, setUserInputs] = useState<Partial<Row>>({});
+  const [showInputs, setShowInputs] = useState(false);
+  const [pendingData, setPendingData] = useState<Row[] | null>(null);
+  const { toast } = useToast();
 
   const isPdf = useMemo(() => file?.type === "application/pdf" || (file && file.name.toLowerCase().endsWith(".pdf")), [file]);
   const isCsv = useMemo(() => file?.type === "text/csv" || (file && file.name.toLowerCase().endsWith(".csv")), [file]);
 
   const handleProcess = async (e: React.FormEvent) => {
     e.preventDefault();
-    setDownUrl("");
+    if (!file) return;
 
-    if (!file) {
-      toast({ title: "No file selected", description: "Please choose a PDF or CSV file.", variant: "destructive" });
-      return;
-    }
+    try {
+      let rows: Row[] = [];
+      let headerMap: Partial<Record<TargetHeader, string>> = {};
 
-    if (isCsv) {
-      const text = await file.text();
-      const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
-      if (parsed.errors.length) {
-        console.error(parsed.errors);
-        toast({ title: "CSV parse error", description: parsed.errors[0]?.message || "Check your file format.", variant: "destructive" });
+      if (isCsv) {
+        // Parse CSV
+        const text = await file.text();
+        const result = Papa.parse(text, { header: true });
+        const data = result.data as Record<string, string>[];
+        
+        if (data.length === 0) {
+          toast({
+            title: "Error",
+            description: "No data found in CSV file",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        const headers = Object.keys(data[0]);
+        headerMap = buildHeaderMap(headers);
+        
+        const missing = getMissingRequiredFields(headerMap);
+        if (missing.length > 0) {
+          setMissingFields(missing);
+          setShowInputs(true);
+          setPendingData(data
+            .filter(row => Object.values(row).some(val => val?.toString().trim()))
+            .map(row => {
+              const mappedRow: Partial<Row> = {};
+              for (const [target, original] of Object.entries(headerMap)) {
+                if (original && row[original] !== undefined) {
+                  mappedRow[target as keyof Row] = row[original];
+                }
+              }
+              return finalizeRow(mappedRow);
+            }));
+          return;
+        }
+
+        rows = data
+          .filter(row => Object.values(row).some(val => val?.toString().trim()))
+          .map(row => {
+            const mappedRow: Partial<Row> = {};
+            for (const [target, original] of Object.entries(headerMap)) {
+              if (original && row[original] !== undefined) {
+                mappedRow[target as keyof Row] = row[original];
+              }
+            }
+            return finalizeRow(mappedRow);
+          });
+      } else if (isPdf) {
+        // Parse PDF
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfRows = await parsePdfToRows(arrayBuffer);
+        
+        if (pdfRows.length === 0) {
+          toast({
+            title: "Error",
+            description: "No valid data found in the PDF file",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Check if required fields are missing from PDF data
+        const sampleRow = pdfRows[0];
+        const availableFields = TARGET_HEADERS.filter(field => 
+          sampleRow[field] && String(sampleRow[field]).trim() !== ""
+        );
+        const missing = TARGET_HEADERS.filter(field => 
+          ["Class", "Section", "Department", "Year", "Semester"].includes(field) && 
+          !availableFields.includes(field)
+        ) as TargetHeader[];
+
+        if (missing.length > 0) {
+          setMissingFields(missing);
+          setShowInputs(true);
+          setPendingData(pdfRows);
+          return;
+        }
+
+        rows = pdfRows;
+      }
+
+      if (rows.length === 0) {
+        toast({
+          title: "Error",
+          description: "No valid data found in the uploaded file",
+          variant: "destructive",
+        });
         return;
       }
 
-      const headerMap = buildHeaderMap(parsed.meta.fields || []);
-
-      const rows: Row[] = (parsed.data as any[]).map((row) => {
-        const out: Partial<Row> = {};
-        for (const target of TARGET_HEADERS) {
-          const sourceKey = headerMap[target];
-          const raw = sourceKey ? row[sourceKey] : "";
-          (out as any)[target] = raw ?? "";
-        }
-        // Fill Grade Points if missing
-        const grade = String((out["Grade"] ?? "")).toUpperCase().trim();
-        const gp = String(out["Grade Points"] ?? "").trim();
-        if (!gp && grade) {
-          (out["Grade Points"]) = GRADE_POINTS_MAP[grade] ?? "";
-        }
-        // Fill Credits if missing
-        const credits = String(out["Credits"] ?? "").trim();
-        if (!credits) {
-          out["Credits"] = defaultCredits;
-        }
-        return out as Row;
-      });
-
+      // Create CSV and download
       const csv = toCsv(rows);
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       setDownUrl(url);
-      toast({ title: "CSV ready", description: "Your file has been processed.", duration: 2500 });
-      return;
-    }
 
-    if (isPdf) {
-      try {
-        const ab = await file.arrayBuffer();
-        const rows = await parsePdfToRows(ab, defaultCredits);
-        if (!rows.length) {
-          toast({ title: "No data found", description: "Could not detect any rows in this PDF. Please try a CSV or a clearer PDF export.", variant: "destructive" });
-          return;
-        }
-        const csv = toCsv(rows);
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        setDownUrl(url);
-        toast({ title: "CSV ready", description: "Your PDF has been parsed.", duration: 3000 });
-      } catch (err) {
-        console.error(err);
-        toast({ title: "PDF parse failed", description: "There was an issue parsing this PDF.", variant: "destructive" });
-      }
-      return;
+      toast({
+        title: "Success!",
+        description: `Processed ${rows.length} rows successfully`,
+      });
+    } catch (error) {
+      console.error("Processing error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to process file. Please check the format.",
+        variant: "destructive",
+      });
     }
+  };
 
-    toast({ title: "Unsupported file", description: "Please upload a .csv or .pdf file.", variant: "destructive" });
+  const handleUserInputSubmit = () => {
+    if (!pendingData) return;
+
+    try {
+      const rows = pendingData.map(row => finalizeRow(row, userInputs));
+      
+      // Create CSV and download
+      const csv = toCsv(rows);
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      setDownUrl(url);
+
+      // Reset state
+      setShowInputs(false);
+      setMissingFields([]);
+      setUserInputs({});
+      setPendingData(null);
+
+      toast({
+        title: "Success!",
+        description: `Processed ${rows.length} rows successfully`,
+      });
+    } catch (error) {
+      console.error("Processing error:", error);
+      toast({
+        title: "Error",
+        description: "Failed to process data with user inputs.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-2xl mx-auto space-y-6">
       {/* Hero Card */}
-      <Card className="relative overflow-hidden bg-gradient-primary shadow-primary border-0 p-8 mb-8">
+      <Card className="relative overflow-hidden bg-gradient-primary shadow-primary border-0 p-8">
         <div className="relative z-10 text-center text-primary-foreground">
           <h2 className="text-2xl font-bold mb-2">Transform Your Academic Data</h2>
-          <p className="text-primary-foreground/90">Upload PDF or CSV files and get standardized CSV output</p>
+          <p className="text-primary-foreground/90">Upload PDF or CSV files and get standardized CSV output with auto-calculated grade points</p>
         </div>
         <div className="absolute inset-0 bg-gradient-to-r from-primary/90 to-accent/90" />
       </Card>
@@ -221,9 +188,10 @@ export default function UploadForm() {
       <Card className="p-8 shadow-card border bg-card/50 backdrop-blur-sm">
         <form onSubmit={handleProcess} className="space-y-6">
           <div className="space-y-3">
-            <label htmlFor="file" className="text-base font-semibold text-foreground">
+            <Label htmlFor="file" className="text-base font-semibold text-foreground flex items-center gap-2">
+              <Upload className="h-5 w-5" />
               Choose File
-            </label>
+            </Label>
             <div className="relative">
               <Input 
                 id="file" 
@@ -233,44 +201,115 @@ export default function UploadForm() {
                 className="h-14 text-lg border-2 border-dashed border-border hover:border-primary/50 transition-colors cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
               />
             </div>
-            <p className="text-sm text-muted-foreground">
-              Supports PDF and CSV files • Grade points auto-calculated • Credits set to 3
-            </p>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <FileText className="h-4 w-4" />
+              Supports PDF and CSV files • Grade points auto-calculated • Handles HTNO, SUBCODE, SUBNAME formats
+            </div>
           </div>
 
           <Button 
             type="submit" 
             size="lg"
-            className="w-full h-14 text-lg font-semibold bg-gradient-primary hover:shadow-glow transition-all duration-300 transform hover:scale-[1.02]"
+            className="w-full h-14 text-lg font-semibold bg-gradient-primary hover:shadow-glow transition-all duration-300 transform hover:scale-[1.02] flex items-center gap-2"
             disabled={!file}
           >
-            {file ? "Process File" : "Select a file to continue"}
+            {file ? (
+              <>
+                <Table className="h-5 w-5" />
+                Process File
+                <ArrowRight className="h-5 w-5" />
+              </>
+            ) : (
+              "Select a file to continue"
+            )}
           </Button>
         </form>
 
-        {downUrl && (
-          <div className="mt-8 p-6 rounded-lg bg-gradient-secondary border border-border/50">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-foreground">File Ready!</h3>
-                <p className="text-sm text-muted-foreground">Your processed CSV is ready for download</p>
-              </div>
-              <a href={downUrl} download={`eduparse_${Date.now()}.csv`}>
-                <Button variant="outline" size="lg" className="shadow-card hover:shadow-primary transition-all duration-300">
-                  Download CSV
+        {showInputs && (
+          <Card className="border-warning/20 bg-warning/5 mt-6">
+            <CardHeader>
+              <CardTitle className="text-warning flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Missing Required Information
+              </CardTitle>
+              <CardDescription>
+                Please provide the following information to complete the CSV file:
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {missingFields.map(field => (
+                <div key={field} className="space-y-2">
+                  <Label htmlFor={field}>{field}</Label>
+                  <Input
+                    id={field}
+                    placeholder={`Enter ${field}`}
+                    value={userInputs[field] || ""}
+                    onChange={(e) => setUserInputs(prev => ({
+                      ...prev,
+                      [field]: e.target.value
+                    }))}
+                  />
+                </div>
+              ))}
+              <div className="flex gap-2 pt-4">
+                <Button 
+                  onClick={handleUserInputSubmit}
+                  disabled={missingFields.some(field => !userInputs[field])}
+                  className="flex-1"
+                >
+                  Generate CSV
                 </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setShowInputs(false);
+                    setMissingFields([]);
+                    setUserInputs({});
+                    setPendingData(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {downUrl && (
+          <Card className="border-success/20 bg-success/5 mt-6">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3 mb-4">
+                <CheckCircle className="h-5 w-5 text-success" />
+                <span className="text-success font-medium">File processed successfully!</span>
+              </div>
+              <a
+                href={downUrl}
+                download="processed_data.csv"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-success text-success-foreground rounded-md hover:bg-success/90 transition-colors"
+              >
+                <Download className="h-4 w-4" />
+                Download CSV
               </a>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
 
         <div className="mt-6 p-4 rounded-lg bg-muted/50">
-          <h4 className="text-sm font-medium text-foreground mb-2">Auto-processed columns:</h4>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            {TARGET_HEADERS.join(" • ")}
-          </p>
+          <h4 className="text-sm font-medium text-foreground mb-2 flex items-center gap-2">
+            <Table className="h-4 w-4" />
+            Auto-processed columns:
+          </h4>
+          <div className="flex flex-wrap gap-1">
+            {TARGET_HEADERS.map(header => (
+              <Badge key={header} variant="secondary" className="text-xs">
+                {header}
+              </Badge>
+            ))}
+          </div>
         </div>
       </Card>
     </div>
   );
-}
+};
+
+export default UploadForm;
