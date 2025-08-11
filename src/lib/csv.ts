@@ -15,6 +15,8 @@ export const HEADER_SYNONYMS: Record<string, TargetHeader> = {
   rollnumber: "Roll Number",
   regno: "Roll Number",
   registrationno: "Roll Number",
+  htno: "Roll Number", // Hall Ticket Number
+  hallticketno: "Roll Number",
   // Student Name
   name: "Student Name",
   student: "Student Name",
