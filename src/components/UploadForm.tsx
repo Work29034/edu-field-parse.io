@@ -126,8 +126,10 @@ function toCsv(rows: Row[]): string {
 export default function UploadForm() {
   const { toast } = useToast();
   const [file, setFile] = useState<File | null>(null);
-  const [defaultCredits, setDefaultCredits] = useState<number>(3);
   const [downUrl, setDownUrl] = useState<string>("");
+  
+  // Auto-set credits to 3 (removed user input)
+  const defaultCredits = 3;
 
   const isPdf = useMemo(() => file?.type === "application/pdf" || (file && file.name.toLowerCase().endsWith(".pdf")), [file]);
   const isCsv = useMemo(() => file?.type === "text/csv" || (file && file.name.toLowerCase().endsWith(".csv")), [file]);
@@ -205,34 +207,70 @@ export default function UploadForm() {
   };
 
   return (
-    <Card className="max-w-2xl mx-auto p-6 space-y-6">
-      <form onSubmit={handleProcess} className="space-y-4">
-        <div className="space-y-2">
-          <label htmlFor="file" className="text-sm font-medium">Upload PDF or CSV</label>
-          <Input id="file" type="file" accept=".pdf,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+    <div className="w-full max-w-2xl mx-auto">
+      {/* Hero Card */}
+      <Card className="relative overflow-hidden bg-gradient-primary shadow-primary border-0 p-8 mb-8">
+        <div className="relative z-10 text-center text-primary-foreground">
+          <h2 className="text-2xl font-bold mb-2">Transform Your Academic Data</h2>
+          <p className="text-primary-foreground/90">Upload PDF or CSV files and get standardized CSV output</p>
         </div>
+        <div className="absolute inset-0 bg-gradient-to-r from-primary/90 to-accent/90" />
+      </Card>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
-          <div className="space-y-2 sm:col-span-2">
-            <label htmlFor="credits" className="text-sm">Default Credits (if missing)</label>
-            <Input id="credits" type="number" min={0} value={defaultCredits} onChange={(e) => setDefaultCredits(Number(e.target.value))} />
+      {/* Upload Form Card */}
+      <Card className="p-8 shadow-card border bg-card/50 backdrop-blur-sm">
+        <form onSubmit={handleProcess} className="space-y-6">
+          <div className="space-y-3">
+            <label htmlFor="file" className="text-base font-semibold text-foreground">
+              Choose File
+            </label>
+            <div className="relative">
+              <Input 
+                id="file" 
+                type="file" 
+                accept=".pdf,.csv" 
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="h-14 text-lg border-2 border-dashed border-border hover:border-primary/50 transition-colors cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Supports PDF and CSV files • Grade points auto-calculated • Credits set to 3
+            </p>
           </div>
-          <Button type="submit" className="w-full">Process</Button>
-        </div>
-      </form>
 
-      {downUrl && (
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <p className="text-sm">Download processed CSV</p>
-          <a href={downUrl} download={`eduparse_${Date.now()}.csv`}>
-            <Button variant="outline">Download</Button>
-          </a>
-        </div>
-      )}
+          <Button 
+            type="submit" 
+            size="lg"
+            className="w-full h-14 text-lg font-semibold bg-gradient-primary hover:shadow-glow transition-all duration-300 transform hover:scale-[1.02]"
+            disabled={!file}
+          >
+            {file ? "Process File" : "Select a file to continue"}
+          </Button>
+        </form>
 
-      <div className="text-xs text-muted-foreground">
-        Columns enforced: {TARGET_HEADERS.join(", ")}. Grade points auto-filled from mapping.
-      </div>
-    </Card>
+        {downUrl && (
+          <div className="mt-8 p-6 rounded-lg bg-gradient-secondary border border-border/50">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-foreground">File Ready!</h3>
+                <p className="text-sm text-muted-foreground">Your processed CSV is ready for download</p>
+              </div>
+              <a href={downUrl} download={`eduparse_${Date.now()}.csv`}>
+                <Button variant="outline" size="lg" className="shadow-card hover:shadow-primary transition-all duration-300">
+                  Download CSV
+                </Button>
+              </a>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-6 p-4 rounded-lg bg-muted/50">
+          <h4 className="text-sm font-medium text-foreground mb-2">Auto-processed columns:</h4>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {TARGET_HEADERS.join(" • ")}
+          </p>
+        </div>
+      </Card>
+    </div>
   );
 }

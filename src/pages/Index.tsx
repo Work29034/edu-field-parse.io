@@ -5,11 +5,16 @@ const Index = () => {
   return (
     <>
       <AppHeader />
-      <main className="min-h-screen bg-gradient-to-b from-primary/5 to-background">
-        <section className="container mx-auto px-6 py-10">
-          <header className="mb-8 text-center">
-            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">EduParse - Convert PDF/CSV to clean CSV</h1>
-            <p className="mt-2 text-muted-foreground">Upload a PDF or CSV. We reorder columns, auto-fill Grade Points and Credits, and give you a clean CSV.</p>
+      <main className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-background">
+        <div className="absolute inset-0 bg-gradient-hero opacity-5" />
+        <section className="relative container mx-auto px-6 py-12">
+          <header className="mb-12 text-center space-y-4">
+            <h1 className="text-4xl sm:text-6xl font-bold tracking-tight bg-gradient-primary bg-clip-text text-transparent">
+              EduParse
+            </h1>
+            <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+              Transform academic data effortlessly. Upload PDF or CSV files and get clean, standardized output with auto-calculated grade points.
+            </p>
           </header>
           <UploadForm />
         </section>
