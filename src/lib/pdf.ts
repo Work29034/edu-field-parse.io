@@ -119,8 +119,8 @@ function parseTabularData(text: string): Row[] {
         const grade = lines[i + 1];
         const credits = lines[i + 2];
         
-        // Validate grade pattern (A+, A, B+, B, C, D, E, F, AB)
-        if (/^[A-F][+]?$|^AB$/.test(grade) && /^\d+$/.test(credits)) {
+        // Validate grade pattern (A+, A, B, C, D, E, F, AB)
+        if (/^(A\+|A|B|C|D|E|F|AB)$/.test(grade) && /^\d+$/.test(credits)) {
           subjectData.push({
             "Subject Name": subjectName,
             "Grade": grade,
@@ -174,7 +174,7 @@ function parseByPatterns(text: string): Row[] {
   
   // Look for HTNO/Roll numbers followed by other data
   const htnoPattern = /\b([A-Z0-9]{8,12})\b/g;
-  const gradePattern = /\b([A-F][+]?|AB)\b/g;
+  const gradePattern = /\b(A\+|A|B|C|D|E|F|AB)\b/g;
   const subjectCodePattern = /\b([A-Z]{2,4}[0-9]{3,4}[A-Z]?)\b/g;
   
   let match;
