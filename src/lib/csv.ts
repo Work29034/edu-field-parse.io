@@ -100,17 +100,27 @@ export function toCsv(rows: Row[]): string {
 }
 
 export function finalizeRow(row: Partial<Row>, userInputs?: Partial<Row>): Row {
+  console.log("Finalizing row:", row, "with user inputs:", userInputs);
+  
+  // Merge user inputs first, then row data (row data takes precedence for existing fields)
+  const merged = { ...userInputs, ...row };
+  
   // Fill Grade Points if missing
-  const grade = String((row["Grade"] ?? "")).toUpperCase().trim();
-  const gp = String(row["Grade Points"] ?? "").trim();
-  if (!gp && grade) {
-    (row["Grade Points"]) = computeGradePoints(grade);
+  const grade = String((merged["Grade"] ?? "")).toUpperCase().trim();
+  const existingGp = String(merged["Grade Points"] ?? "").trim();
+  
+  if (!existingGp && grade) {
+    const calculatedGp = computeGradePoints(grade);
+    if (calculatedGp !== "") {
+      merged["Grade Points"] = calculatedGp;
+    }
   }
   
   const out: Row = {} as any;
   for (const h of TARGET_HEADERS) {
-    // Use user inputs for missing required fields, otherwise use row data
-    (out as any)[h] = (row as any)[h] ?? (userInputs as any)?.[h] ?? "";
+    (out as any)[h] = merged[h] ?? "";
   }
+  
+  console.log("Finalized row:", out);
   return out;
 }

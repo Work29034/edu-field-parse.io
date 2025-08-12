@@ -14,21 +14,160 @@ export async function parsePdfToRows(
 ): Promise<Row[]> {
   const pdf = await getDocument({ data: arrayBuffer }).promise;
   let fullText = "";
+  
+  // Extract text from all pages
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content: any = await page.getTextContent();
-    const pageText = content.items.map((it: any) => it.str).join("\n");
-    fullText += "\n" + pageText;
+    const pageText = content.items.map((it: any) => it.str).join(" ");
+    fullText += " " + pageText;
   }
+
+  console.log("PDF Full Text:", fullText);
 
   const lines = fullText
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
 
+  // First try to find tabular data by looking for header patterns
+  const headerPatterns = [
+    /\b(?:SNO|S\.?NO|SERIAL)\b/i,
+    /\b(?:HTNO|HALL\s*TICKET|ROLL\s*NO|ROLL\s*NUMBER)\b/i,
+    /\b(?:SUBCODE|SUB\s*CODE|SUBJECT\s*CODE)\b/i,
+    /\b(?:SUBNAME|SUB\s*NAME|SUBJECT\s*NAME|SUBJECT)\b/i,
+    /\b(?:GRADE|GRD)\b/i,
+    /\b(?:CREDITS|CR)\b/i
+  ];
+
+  // Try to parse as tabular data first
+  const tabularRows = parseTabularData(fullText);
+  if (tabularRows.length > 0) {
+    console.log("Found tabular data:", tabularRows);
+    return tabularRows.map(row => {
+      const out: any = {};
+      for (const h of TARGET_HEADERS) out[h] = row[h] ?? "";
+      return out as Row;
+    });
+  }
+
+  // Fallback to key-value parsing
+  return parseKeyValueData(lines);
+}
+
+function parseTabularData(text: string): Row[] {
+  const rows: Row[] = [];
+  
+  // Split by common separators and try to identify columns
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  
+  // Look for header line
+  let headerLine = "";
+  let dataStartIndex = -1;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/\b(?:SNO|HTNO|SUBCODE|SUBNAME|GRADE|CREDITS)\b/i.test(line)) {
+      headerLine = line;
+      dataStartIndex = i + 1;
+      break;
+    }
+  }
+
+  if (!headerLine || dataStartIndex === -1) {
+    // Try to find data by patterns
+    return parseByPatterns(text);
+  }
+
+  console.log("Header line found:", headerLine);
+  
+  // Parse header to determine column positions
+  const headerWords = headerLine.split(/\s+/);
+  const columnMap: Record<string, number> = {};
+  
+  headerWords.forEach((word, index) => {
+    const normalized = normalize(word);
+    if (HEADER_SYNONYMS[normalized]) {
+      columnMap[HEADER_SYNONYMS[normalized]] = index;
+    }
+  });
+
+  console.log("Column mapping:", columnMap);
+
+  // Parse data rows
+  for (let i = dataStartIndex; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || line.length < 5) continue;
+    
+    const values = line.split(/\s+/);
+    const row: Partial<Row> = {};
+    
+    // Map values to columns
+    Object.entries(columnMap).forEach(([targetHeader, colIndex]) => {
+      if (values[colIndex]) {
+        (row as any)[targetHeader] = values[colIndex];
+      }
+    });
+
+    // Skip SNO column and ensure we have meaningful data
+    if (row["Roll Number"] || row["Subject Code"] || row["Subject Name"]) {
+      rows.push(finalizeRow(row));
+    }
+  }
+
+  return rows;
+}
+
+function parseByPatterns(text: string): Row[] {
+  const rows: Row[] = [];
+  
+  // Look for HTNO/Roll numbers followed by other data
+  const htnoPattern = /\b([A-Z0-9]{8,12})\b/g;
+  const gradePattern = /\b([A-F][+]?|AB)\b/g;
+  const subjectCodePattern = /\b([A-Z]{2,4}[0-9]{3,4}[A-Z]?)\b/g;
+  
+  let match;
+  const htnoMatches = [];
+  
+  // Find all potential HTNOs
+  while ((match = htnoPattern.exec(text)) !== null) {
+    htnoMatches.push({ value: match[1], index: match.index });
+  }
+
+  console.log("Found potential HTNOs:", htnoMatches);
+
+  // For each HTNO, try to find associated data
+  htnoMatches.forEach(htnoMatch => {
+    const startPos = htnoMatch.index;
+    const endPos = Math.min(startPos + 200, text.length); // Look ahead 200 chars
+    const segment = text.substring(startPos, endPos);
+    
+    const subCodeMatch = subjectCodePattern.exec(segment);
+    const gradeMatch = gradePattern.exec(segment);
+    
+    if (subCodeMatch || gradeMatch) {
+      const row: Partial<Row> = {
+        "Roll Number": htnoMatch.value
+      };
+      
+      if (subCodeMatch) {
+        row["Subject Code"] = subCodeMatch[1];
+      }
+      
+      if (gradeMatch) {
+        row["Grade"] = gradeMatch[1];
+      }
+      
+      rows.push(finalizeRow(row));
+    }
+  });
+
+  return rows;
+}
+
+function parseKeyValueData(lines: string[]): Row[] {
   // Helper to detect key:value lines and map to target header
   function parseKeyVal(line: string): { header?: keyof Row; value?: string } {
-    // common separators
     const m = line.match(/^(.*?)[\s]*[:\-–][\s]*(.+)$/);
     if (!m) return {};
     const keyNorm = normalize(m[1] || "");
@@ -37,22 +176,11 @@ export async function parsePdfToRows(
     return { header, value: (m[2] || "").trim() } as any;
   }
 
-  // Context of the current student
   const studentFields = new Set([
-    "Roll Number",
-    "Student Name",
-    "Class",
-    "Section",
-    "Department",
-    "Year",
-    "Semester",
+    "Roll Number", "Student Name", "Class", "Section", "Department", "Year", "Semester"
   ] as const);
   const subjectFields = new Set([
-    "Subject Code",
-    "Subject Name",
-    "Grade",
-    "Grade Points",
-    "Credits",
+    "Subject Code", "Subject Name", "Grade", "Grade Points", "Credits"
   ] as const);
 
   let ctx: Partial<Row> = {};
@@ -60,11 +188,7 @@ export async function parsePdfToRows(
   const rows: Row[] = [];
 
   function flushSubject() {
-    if (
-      Object.keys(subj).length &&
-      (subj["Subject Code"] || subj["Subject Name"] || subj["Grade"])
-    ) {
-      // merge student context
+    if (Object.keys(subj).length && (subj["Subject Code"] || subj["Subject Name"] || subj["Grade"])) {
       const merged: Partial<Row> = { ...ctx, ...subj };
       rows.push(finalizeRow(merged));
       subj = {};
@@ -76,7 +200,6 @@ export async function parsePdfToRows(
     if (!header || value == null) continue;
 
     if (studentFields.has(header as any)) {
-      // starting a new student? If a new roll appears and we have a pending subject, flush it
       if (header === "Roll Number") {
         flushSubject();
         ctx = { ...ctx, [header]: value };
@@ -88,7 +211,6 @@ export async function parsePdfToRows(
 
     if (subjectFields.has(header as any)) {
       (subj as any)[header] = value;
-      // heuristic: if we got a grade, it's likely a full subject row; flush
       if (header === "Grade") {
         flushSubject();
       }
@@ -96,20 +218,7 @@ export async function parsePdfToRows(
     }
   }
 
-  // flush trailing subject
   flushSubject();
-
-  // Fallback: if no rows found, attempt a naive table-like parse by scanning tokens
-  if (!rows.length) {
-    const text = lines.join(" ");
-    const re = /(?:Roll\s*No\.?|Roll\s*Number\s*|Reg\.?\s*No\.?)[^\w]?([A-Za-z0-9\-\/]+)/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
-      const roll = m[1];
-      const base: Partial<Row> = { "Roll Number": roll } as any;
-      rows.push(finalizeRow(base));
-    }
-  }
 
   // Ensure all rows have defined headers
   return rows.map((r) => {
