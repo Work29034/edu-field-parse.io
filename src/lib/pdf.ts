@@ -58,63 +58,114 @@ export async function parsePdfToRows(
 function parseTabularData(text: string): Row[] {
   const rows: Row[] = [];
   
-  // Split by common separators and try to identify columns
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  // Split text by pages and parse each page
+  const pages = text.split(/Page\s+\d+/);
   
-  // Look for header line
-  let headerLine = "";
-  let dataStartIndex = -1;
+  let rollData: Record<string, any> = {}; // Store roll number data
+  let subjectData: Array<any> = []; // Store subject data in order
   
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/\b(?:SNO|HTNO|SUBCODE|SUBNAME|GRADE|CREDITS)\b/i.test(line)) {
-      headerLine = line;
-      dataStartIndex = i + 1;
-      break;
-    }
-  }
-
-  if (!headerLine || dataStartIndex === -1) {
-    // Try to find data by patterns
-    return parseByPatterns(text);
-  }
-
-  console.log("Header line found:", headerLine);
-  
-  // Parse header to determine column positions
-  const headerWords = headerLine.split(/\s+/);
-  const columnMap: Record<string, number> = {};
-  
-  headerWords.forEach((word, index) => {
-    const normalized = normalize(word);
-    if (HEADER_SYNONYMS[normalized]) {
-      columnMap[HEADER_SYNONYMS[normalized]] = index;
-    }
-  });
-
-  console.log("Column mapping:", columnMap);
-
-  // Parse data rows
-  for (let i = dataStartIndex; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line || line.length < 5) continue;
+  // Parse first page for student info
+  const firstPage = pages[1] || pages[0];
+  if (firstPage) {
+    // Extract student records from first page
+    const lines = firstPage.split(/\s+/).filter(Boolean);
     
-    const values = line.split(/\s+/);
-    const row: Partial<Row> = {};
-    
-    // Map values to columns
-    Object.entries(columnMap).forEach(([targetHeader, colIndex]) => {
-      if (values[colIndex]) {
-        (row as any)[targetHeader] = values[colIndex];
+    // Look for roll number pattern and extract data
+    let i = 0;
+    while (i < lines.length) {
+      // Look for roll number pattern (like 22B81A1229)
+      if (/^[0-9]{2}[A-Z0-9]{8,10}$/.test(lines[i])) {
+        const rollNo = lines[i];
+        const name = lines[i + 1];
+        const studentClass = lines[i + 2];
+        const section = lines[i + 3];
+        const department = lines[i + 4];
+        const year = lines[i + 5];
+        const semester = lines[i + 6];
+        const subjectCode = lines[i + 7];
+        
+        if (!rollData[rollNo]) {
+          rollData[rollNo] = {
+            "Roll Number": rollNo,
+            "Student Name": name,
+            "Class": studentClass,
+            "Section": section,
+            "Department": department,
+            "Year": year,
+            "Semester": semester,
+            subjects: []
+          };
+        }
+        
+        rollData[rollNo].subjects.push({ "Subject Code": subjectCode });
+        i += 8;
+      } else {
+        i++;
       }
-    });
-
-    // Skip SNO column and ensure we have meaningful data
-    if (row["Roll Number"] || row["Subject Code"] || row["Subject Name"]) {
-      rows.push(finalizeRow(row));
     }
   }
-
+  
+  // Parse second page for subject details
+  const secondPage = pages[2];
+  if (secondPage) {
+    const lines = secondPage.split(/\s+/).filter(Boolean);
+    let subjectIndex = 0;
+    
+    let i = 0;
+    while (i < lines.length) {
+      // Look for subject name followed by grade and credits
+      if (i + 2 < lines.length) {
+        const subjectName = lines[i];
+        const grade = lines[i + 1];
+        const credits = lines[i + 2];
+        
+        // Validate grade pattern (A+, A, B+, B, C, D, E, F, AB)
+        if (/^[A-F][+]?$|^AB$/.test(grade) && /^\d+$/.test(credits)) {
+          subjectData.push({
+            "Subject Name": subjectName,
+            "Grade": grade,
+            "Credits": credits
+          });
+          i += 3;
+        } else {
+          i++;
+        }
+      } else {
+        i++;
+      }
+    }
+  }
+  
+  // Combine student data with subject data
+  const rollNumbers = Object.keys(rollData);
+  let subjectDataIndex = 0;
+  
+  for (const rollNo of rollNumbers) {
+    const student = rollData[rollNo];
+    
+    for (let j = 0; j < student.subjects.length; j++) {
+      if (subjectDataIndex < subjectData.length) {
+        const row: Partial<Row> = {
+          "Roll Number": student["Roll Number"],
+          "Student Name": student["Student Name"],
+          "Class": student["Class"],
+          "Section": student["Section"],
+          "Department": student["Department"],
+          "Year": student["Year"],
+          "Semester": student["Semester"],
+          "Subject Code": student.subjects[j]["Subject Code"],
+          "Subject Name": subjectData[subjectDataIndex]["Subject Name"],
+          "Grade": subjectData[subjectDataIndex]["Grade"],
+          "Credits": subjectData[subjectDataIndex]["Credits"]
+        };
+        
+        rows.push(finalizeRow(row));
+        subjectDataIndex++;
+      }
+    }
+  }
+  
+  console.log("Parsed tabular rows:", rows);
   return rows;
 }
 
