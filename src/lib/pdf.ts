@@ -11,7 +11,7 @@ GlobalWorkerOptions.workerSrc = workerSrc as any;
 
 export async function parsePdfToRows(
   arrayBuffer: ArrayBuffer
-): Promise<Row[]> {
+): Promise<{ rows: Row[]; detectedSubjects?: string[] }> {
   const pdf = await getDocument({ data: arrayBuffer }).promise;
   let fullText = "";
   
@@ -41,21 +41,25 @@ export async function parsePdfToRows(
   ];
 
   // Try to parse as tabular data first
-  const tabularRows = parseTabularData(fullText);
-  if (tabularRows.length > 0) {
-    console.log("Found tabular data:", tabularRows);
-    return tabularRows.map(row => {
-      const out: any = {};
-      for (const h of TARGET_HEADERS) out[h] = row[h] ?? "";
-      return out as Row;
-    });
+  const tabularResult = parseTabularData(fullText);
+  if (tabularResult.rows.length > 0) {
+    console.log("Found tabular data:", tabularResult.rows);
+    return {
+      rows: tabularResult.rows.map(row => {
+        const out: any = {};
+        for (const h of TARGET_HEADERS) out[h] = row[h] ?? "";
+        return out as Row;
+      }),
+      detectedSubjects: tabularResult.detectedSubjects
+    };
   }
 
   // Fallback to key-value parsing
-  return parseKeyValueData(lines);
+  const kvResult = parseKeyValueData(lines);
+  return { rows: kvResult };
 }
 
-function parseTabularData(text: string): Row[] {
+function parseTabularData(text: string): { rows: Row[]; detectedSubjects: string[] } {
   const rows: Row[] = [];
   
   // Split text by pages and parse each page
@@ -63,6 +67,7 @@ function parseTabularData(text: string): Row[] {
   
   let rollData: Record<string, any> = {}; // Store roll number data
   let subjectData: Array<any> = []; // Store subject data in order
+  let detectedSubjects: string[] = []; // Store detected subject names
   
   // Parse first page for student info
   const firstPage = pages[1] || pages[0];
@@ -120,11 +125,16 @@ function parseTabularData(text: string): Row[] {
         const credits = lines[i + 2];
         
         // Validate grade pattern (A+, A, B, C, D, E, F, AB)
-        if (/^(A\+|A|B|C|D|E|F|AB)$/.test(grade) && /^\d+$/.test(credits)) {
+        if (/^(A\+|A|B|C|D|E|F|AB)$/.test(grade)) {
+          // Add to detected subjects if not already present
+          if (!detectedSubjects.includes(subjectName)) {
+            detectedSubjects.push(subjectName);
+          }
+          
           subjectData.push({
             "Subject Name": subjectName,
             "Grade": grade,
-            "Credits": credits
+            "Credits": /^\d+$/.test(credits) ? credits : "" // Only add credits if it's a valid number
           });
           i += 3;
         } else {
@@ -166,7 +176,8 @@ function parseTabularData(text: string): Row[] {
   }
   
   console.log("Parsed tabular rows:", rows);
-  return rows;
+  console.log("Detected subjects:", detectedSubjects);
+  return { rows, detectedSubjects };
 }
 
 function parseByPatterns(text: string): Row[] {

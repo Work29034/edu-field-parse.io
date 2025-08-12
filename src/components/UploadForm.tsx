@@ -18,6 +18,9 @@ const UploadForm = () => {
   const [userInputs, setUserInputs] = useState<Partial<Row>>({});
   const [showInputs, setShowInputs] = useState(false);
   const [pendingData, setPendingData] = useState<Row[] | null>(null);
+  const [detectedSubjects, setDetectedSubjects] = useState<string[]>([]);
+  const [creditsInput, setCreditsInput] = useState<Record<string, string>>({});
+  const [needsCreditsInput, setNeedsCreditsInput] = useState(false);
   const { toast } = useToast();
 
   const isPdf = useMemo(() => file?.type === "application/pdf" || (file && file.name.toLowerCase().endsWith(".pdf")), [file]);
@@ -81,9 +84,9 @@ const UploadForm = () => {
       } else if (isPdf) {
         // Parse PDF
         const arrayBuffer = await file.arrayBuffer();
-        const pdfRows = await parsePdfToRows(arrayBuffer);
+        const result = await parsePdfToRows(arrayBuffer);
         
-        if (pdfRows.length === 0) {
+        if (result.rows.length === 0) {
           toast({
             title: "Error",
             description: "No valid data found in the PDF file",
@@ -92,8 +95,19 @@ const UploadForm = () => {
           return;
         }
 
+        // Check if subjects were detected but credits are missing
+        if (result.detectedSubjects && result.detectedSubjects.length > 0) {
+          const hasCredits = result.rows.some(row => row["Credits"] && String(row["Credits"]).trim() !== "");
+          if (!hasCredits) {
+            setDetectedSubjects(result.detectedSubjects);
+            setPendingData(result.rows);
+            setNeedsCreditsInput(true);
+            return;
+          }
+        }
+
         // Check if required fields are missing from PDF data
-        const sampleRow = pdfRows[0];
+        const sampleRow = result.rows[0];
         const availableFields = TARGET_HEADERS.filter(field => 
           sampleRow[field] && String(sampleRow[field]).trim() !== ""
         );
@@ -105,11 +119,11 @@ const UploadForm = () => {
         if (missing.length > 0) {
           setMissingFields(missing);
           setShowInputs(true);
-          setPendingData(pdfRows);
+          setPendingData(result.rows);
           return;
         }
 
-        rows = pdfRows;
+        rows = result.rows;
       }
 
       if (rows.length === 0) {
@@ -171,6 +185,56 @@ const UploadForm = () => {
         variant: "destructive",
       });
     }
+  };
+
+  const handleCreditsSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!pendingData) return;
+    
+    // Apply credits to pending data
+    const updatedRows = pendingData.map(row => ({
+      ...row,
+      "Credits": creditsInput[String(row["Subject Name"])] || ""
+    }));
+    
+    // Check for missing required fields
+    const sampleRow = updatedRows[0];
+    if (sampleRow) {
+      const availableFields = TARGET_HEADERS.filter(field => 
+        sampleRow[field] && String(sampleRow[field]).trim() !== ""
+      );
+      const missing = TARGET_HEADERS.filter(field => 
+        ["Class", "Section", "Department", "Year", "Semester"].includes(field) && 
+        !availableFields.includes(field)
+      ) as TargetHeader[];
+      
+      if (missing.length > 0) {
+        setMissingFields(missing);
+        setPendingData(updatedRows);
+        setNeedsCreditsInput(false);
+        setShowInputs(true);
+        return;
+      }
+    }
+    
+    // Generate final CSV
+    const finalRows = updatedRows.map(row => finalizeRow(row));
+    const csv = toCsv(finalRows);
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    setDownUrl(url);
+    
+    // Reset state
+    setNeedsCreditsInput(false);
+    setDetectedSubjects([]);
+    setCreditsInput({});
+    setPendingData(null);
+    
+    toast({
+      title: "Success!",
+      description: `Processed ${finalRows.length} rows successfully`,
+    });
   };
 
   return (
@@ -266,11 +330,67 @@ const UploadForm = () => {
                     setMissingFields([]);
                     setUserInputs({});
                     setPendingData(null);
+                    setNeedsCreditsInput(false);
+                    setDetectedSubjects([]);
+                    setCreditsInput({});
                   }}
                 >
                   Cancel
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Credits Input Form */}
+        {needsCreditsInput && detectedSubjects.length > 0 && (
+          <Card className="border-orange-200 bg-orange-50 mt-6">
+            <CardHeader>
+              <CardTitle className="text-orange-800 flex items-center gap-2">
+                <Table className="h-5 w-5" />
+                Detected Subjects - Please Provide Credits
+              </CardTitle>
+              <CardDescription>
+                Enter the credit hours for each detected subject:
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleCreditsSubmit} className="space-y-4">
+                {detectedSubjects.map((subject, index) => (
+                  <div key={index} className="grid grid-cols-2 gap-4 items-center">
+                    <Label className="font-medium">{subject}</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      max="10"
+                      placeholder="Enter credits"
+                      value={creditsInput[subject] || ""}
+                      onChange={(e) => setCreditsInput(prev => ({
+                        ...prev,
+                        [subject]: e.target.value
+                      }))}
+                      required
+                    />
+                  </div>
+                ))}
+                <div className="flex gap-2 pt-4">
+                  <Button type="submit" className="flex-1">
+                    Continue with Credits
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => {
+                      setNeedsCreditsInput(false);
+                      setDetectedSubjects([]);
+                      setCreditsInput({});
+                      setPendingData(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
             </CardContent>
           </Card>
         )}
